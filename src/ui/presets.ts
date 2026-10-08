@@ -594,7 +594,8 @@ export class PresetBrowser {
       const list = loadUserPresets(scope).filter(p => p.name !== name)
       list.push({ ...this.engine.toPreset(name), scope })
       saveUserPresets(list, scope)
-      this.refresh(`user:${name}`)
+      ;(this.engine as unknown as { __sgrPreset?: string }).__sgrPreset = `user:${scope}:${name}`
+      this.refresh(`user:${scope}:${name}`)      // SP-EXT: options are user:<scope>:<name>; the old value matched nothing and the dropdown fell back to Init
     })
 
     const exportBtn = el('button', 'hdr-btn', 'EXPORT')
@@ -624,7 +625,8 @@ export class PresetBrowser {
         const list = loadUserPresets(scope).filter(p => p.name !== preset.name)
         list.push({ ...preset, scope })
         saveUserPresets(list, scope)
-        this.refresh(`user:${preset.name}`)
+        ;(this.engine as unknown as { __sgrPreset?: string }).__sgrPreset = `user:${scope}:${preset.name}`
+        this.refresh(`user:${scope}:${preset.name}`)   // SP-EXT: same value format as refresh() writes
       } catch (err) {
         alert(`Could not load preset: ${err}`)
       }
@@ -633,7 +635,9 @@ export class PresetBrowser {
     importBtn.addEventListener('click', () => file.click())
 
     this.root.append(this.select, save, exportBtn, importBtn, file)
-    this.refresh('factory:Init')
+    // open on whatever this engine is playing, so a remount (or a reload, once the host restores it) shows the truth
+    const cur = (this.engine as unknown as { __sgrPreset?: string }).__sgrPreset
+    this.refresh(cur ?? 'factory:Init')
   }
 
   private refresh(selected: string): void {
@@ -678,6 +682,11 @@ export class PresetBrowser {
             const nm = parts.length > 2 ? parts.slice(2).join(':') : name
             return readAll().find((p) => p.name === nm && (scope == null || (p.scope ?? 'default') === scope))
           })()
-    if (preset) this.engine.loadPreset(preset)
+    if (preset) {
+      this.engine.loadPreset(preset)
+      // SP-EXT: tell the host which preset this engine is on -- it cannot see the dropdown, and a host that persists
+      // the choice (or shows it in its own channel list) needs to be told, not to guess.
+      ;(this.engine as unknown as { __sgrPreset?: string }).__sgrPreset = key
+    }
   }
 }
