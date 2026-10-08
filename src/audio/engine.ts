@@ -57,9 +57,20 @@ export class SynthEngine {
     return this.ctx !== null
   }
 
-  async start(): Promise<void> {
+  // SP-EXT(begin): the worklet node itself, so a host can route it (and read its port) without reaching into
+  // private state.
+  get audioNode(): AudioWorkletNode | null {
+    return this.node
+  }
+  // SP-EXT(end)
+
+  async start(opts: { ctx?: AudioContext; connectToDestination?: boolean } = {}): Promise<void> {
     if (this.ctx) return
-    const ctx = new AudioContext({ latencyHint: 'interactive' })
+    // SP-EXT(begin): a host may supply its own AudioContext (Sonic Pi hands us the engine's) and own the output
+    // routing, so the synth can be connected into an existing graph instead of playing straight to the speakers.
+    // Called with no argument -- as the app itself does -- the behaviour is exactly as before.
+    const ctx = opts.ctx ?? new AudioContext({ latencyHint: 'interactive' })
+    // SP-EXT(end)
     await ctx.audioWorklet.addModule(processorUrl)
     const node = new AudioWorkletNode(ctx, 'soundgineer', {
       numberOfInputs: 0,
@@ -67,7 +78,10 @@ export class SynthEngine {
       outputChannelCount: [2]
     })
     node.port.onmessage = e => this.onWorkletMessage(e.data as FromWorklet)
-    node.connect(ctx.destination)
+    // SP-EXT(begin): with an injected context the host decides where the output goes (Sonic Pi routes it into
+    // engine.node.input, so with_fx, the scope and the Recorder all apply); otherwise, as before, the speakers.
+    if (opts.connectToDestination ?? !opts.ctx) node.connect(ctx.destination)
+    // SP-EXT(end)
     this.ctx = ctx
     this.node = node
     await ctx.resume()
