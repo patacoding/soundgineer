@@ -49,15 +49,29 @@ export class EnvDisplay {
     this.draw()
   }
 
+  /** Vertical position -> that stage's curve (-1..1); decay is the level it falls to, which is what a player expects. */
+  private setCurve(stage: string, py: number): void {
+    const t = Math.min(1, Math.max(0, 1 - (py - 5) / ((this.h - 10) || 1)))
+    if (stage === 'attack') this.setValue('atk_curve', t * 2 - 1)
+    else if (stage === 'decay') this.setValue('sustain', t)
+    else if (stage === 'release') this.setValue('rel_curve', t * 2 - 1)
+  }
+
   private onDown = (e: PointerEvent): void => {
     const r = this.canvas.getBoundingClientRect()
     const px = e.clientX - r.left
     const py = e.clientY - r.top
-    let best: (typeof this.handles)[number] | null = null
-    let bestD = 14
+    // Priority matters: with a short attack the curve handle sits on top of a breakpoint handle, and picking by raw
+    // distance alone made some handles impossible to grab -- reported as "several handles will not drag".
+    const rank = (h: { kind: string }) => (h.kind === "level" ? 0 : h.kind === "curve" ? 1 : 2);
+    let best: (typeof this.handles)[number] | null = null;
+    let bestD = 13;
     for (const h of this.handles) {
-      const d = Math.hypot(h.x - px, h.y - py)
-      if (d < bestD) { bestD = d; best = h }
+      const d = Math.hypot(h.x - px, h.y - py);
+      if (d > bestD) continue;
+      if (h.kind === "time" && Math.abs(h.x - px) > 10) continue;      // a time handle is grabbed by its own column
+      if (best && rank(h) > rank(best) && Math.abs(h.x - best.x) < 8) continue;
+      bestD = d; best = h;
     }
     if (!best) return
     this.drag = { field: best.field, kind: best.kind, grabX: px }
@@ -75,16 +89,13 @@ export class EnvDisplay {
     if (this.drag.kind === 'level') {                       // sustain: the height of the held part
       this.setValue('sustain', Math.min(1, Math.max(0, 1 - (py - 5) / ((this.h - 10) || 1))))
     } else if (this.drag.kind === 'curve') {                // drag a segment up/down to bend it
-      const c = Math.min(1, Math.max(-1, 1 - 2 * ((py - 5) / ((this.h - 10) || 1))))
-      const field = this.drag.field
-      if (field === 'attack') this.setValue('atk_curve', c)
-      else if (field === 'decay') this.setValue('dec_curve', c)
-      else this.setValue('rel_curve', c)
-    } else {                                                 // times: move the handle sideways
+      this.setCurve(this.drag.field, py)
+    } else {                                                 // times move sideways, and vertically they bend their stage
       const cur = this.v(this.drag.field)
       const perPx = (this.v('delay') + this.v('attack') + this.v('hold') + this.v('decay') + this.v('release')) / ((this.w - 8) || 1)
       this.setValue(this.drag.field, Math.max(0.0005, cur + (px - this.drag.grabX) * perPx))
       this.drag.grabX = px
+      if (this.drag.field !== 'delay' && this.drag.field !== 'hold') this.setCurve(this.drag.field, py)
     }
     e.preventDefault()
   }
