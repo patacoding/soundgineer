@@ -552,28 +552,27 @@ const FACTORY: Partial<PresetData>[] = [
 
 function readAll(): Scoped[] {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as Scoped[]
+    const all = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') as Scoped[]
+    // names are the identity: if an earlier experiment left two entries with the same name, keep the last one
+    const byName = new Map<string, Scoped>()
+    for (const p of all) if (p && typeof p.name === "string") byName.set(p.name, p)
+    return [...byName.values()]
   } catch {
     return []
   }
 }
 
-// SP-EXT: a host may run one engine per MIDI channel, so a preset belongs to the engine that saved it. Without this,
-// saving "Bass" on channel 2 replaced "Bass" from channel 1 -- presets that appear to vanish.
-function scopeOf(engine: unknown): string {
-  const s = (engine as { __sgrScope?: string })?.__sgrScope
-  return typeof s === "string" && s ? s : "default"
+function loadUserPresets(): Scoped[] {
+  return readAll()
 }
 
-function loadUserPresets(scope?: string): Scoped[] {
-  const all = readAll()
-  return scope == null ? all : all.filter((p) => (p.scope ?? "default") === scope)
-}
-
-function saveUserPresets(list: Scoped[], scope: string): void {
-  // merge, and replace only entries of the same scope and name
-  const keep = readAll().filter((p) => !((p.scope ?? "default") === scope && list.some((n) => n.name === p.name)))
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([...keep, ...list]))
+// SP-EXT: merge on save. Presets are a library, not a property of a channel, so the name is the identity and saving an
+// existing name replaces it -- but the write must read what is stored first: every engine has its own browser, and a
+// blind write made the last channel to save erase the others' work.
+function saveUserPresets(list: Scoped[]): void {
+  const byName = new Map(readAll().map((p) => [p.name, p]))
+  for (const p of list) byName.set(p.name, p)
+  localStorage.setItem(STORAGE_KEY, JSON.stringify([...byName.values()]))
 }
 
 export class PresetBrowser {
@@ -590,12 +589,11 @@ export class PresetBrowser {
     save.addEventListener('click', () => {
       const name = prompt('Preset name?', 'My Patch')
       if (!name) return
-      const scope = scopeOf(this.engine)
-      const list = loadUserPresets(scope).filter(p => p.name !== name)
-      list.push({ ...this.engine.toPreset(name), scope })
-      saveUserPresets(list, scope)
-      ;(this.engine as unknown as { __sgrPreset?: string }).__sgrPreset = `user:${scope}:${name}`
-      this.refresh(`user:${scope}:${name}`)      // SP-EXT: options are user:<scope>:<name>; the old value matched nothing and the dropdown fell back to Init
+      const list = loadUserPresets().filter(p => p.name !== name)
+      list.push(this.engine.toPreset(name))
+      saveUserPresets(list)
+      ;(this.engine as unknown as { __sgrPreset?: string }).__sgrPreset = `user:${name}`
+      this.refresh(`user:${name}`)      // SP-EXT: options are user:<scope>:<name>; the old value matched nothing and the dropdown fell back to Init
     })
 
     const exportBtn = el('button', 'hdr-btn', 'EXPORT')
@@ -621,12 +619,11 @@ export class PresetBrowser {
       try {
         const preset = JSON.parse(await f.text()) as PresetData
         this.engine.loadPreset(preset)
-        const scope = scopeOf(this.engine)
-        const list = loadUserPresets(scope).filter(p => p.name !== preset.name)
-        list.push({ ...preset, scope })
-        saveUserPresets(list, scope)
-        ;(this.engine as unknown as { __sgrPreset?: string }).__sgrPreset = `user:${scope}:${preset.name}`
-        this.refresh(`user:${scope}:${preset.name}`)   // SP-EXT: same value format as refresh() writes
+        const list = loadUserPresets().filter(p => p.name !== preset.name)
+        list.push(preset)
+        saveUserPresets(list)
+        ;(this.engine as unknown as { __sgrPreset?: string }).__sgrPreset = `user:${preset.name}`
+        this.refresh(`user:${preset.name}`)   // SP-EXT: same value format as refresh() writes
       } catch (err) {
         alert(`Could not load preset: ${err}`)
       }
@@ -650,18 +647,16 @@ export class PresetBrowser {
       fGroup.appendChild(o)
     }
     this.select.appendChild(fGroup)
-    // SP-EXT: list every channel's presets, labelled. Scoping them away fixed the overwriting but made each channel
-    // look empty, which is indistinguishable from "the preset was not saved".
-    const mine = scopeOf(this.engine)
+    // SP-EXT: one library for every channel. Scoping presets by channel was wrong: a patch is not a property of a
+    // channel, and it produced duplicates and an entanglement the player never asked for.
     const users = loadUserPresets()
     if (users.length) {
       const uGroup = el('optgroup') as HTMLOptGroupElement
       uGroup.label = 'User'
       for (const p of users) {
         const o = el('option', undefined, p.name) as HTMLOptionElement
-        o.value = `user:${p.scope ?? 'default'}:${p.name}`
-
-        o.textContent = (p.scope ?? 'default') === mine ? p.name : `${p.name}  (${p.scope ?? 'default'})`
+        o.value = `user:${p.name}`
+        o.textContent = p.name
         uGroup.appendChild(o)
       }
       this.select.appendChild(uGroup)
@@ -675,13 +670,7 @@ export class PresetBrowser {
     const preset =
       kind === 'factory'
         ? FACTORY.find(p => p.name === name)
-        : (() => {
-            // value is user:<scope>:<name>; a preset saved by another channel can still be used here
-            const parts = value.split(':')
-            const scope = parts.length > 2 ? parts[1] : undefined
-            const nm = parts.length > 2 ? parts.slice(2).join(':') : name
-            return readAll().find((p) => p.name === nm && (scope == null || (p.scope ?? 'default') === scope))
-          })()
+        : readAll().find((p) => p.name === name)
     if (preset) {
       this.engine.loadPreset(preset)
       // SP-EXT: tell the host which preset this engine is on -- it cannot see the dropdown, and a host that persists
