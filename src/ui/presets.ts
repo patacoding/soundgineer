@@ -557,7 +557,13 @@ function loadUserPresets(): PresetData[] {
 }
 
 function saveUserPresets(list: PresetData[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
+  // SP-EXT: merge with what is already stored instead of replacing it. Every engine has its own browser and its own
+  // in-memory list, so with one engine per MIDI channel a blind write made the last channel to save erase the user
+  // presets of all the others -- the "cannot save reliably" a player sees as presets vanishing.
+  const onDisk = loadUserPresets()
+  const byName = new Map(onDisk.map((p) => [p.name, p]))
+  for (const p of list) byName.set(p.name, p)
+  localStorage.setItem(STORAGE_KEY, JSON.stringify([...byName.values()]))
 }
 
 export class PresetBrowser {
