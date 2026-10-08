@@ -646,13 +646,18 @@ export class PresetBrowser {
       fGroup.appendChild(o)
     }
     this.select.appendChild(fGroup)
-    const users = loadUserPresets(scopeOf(this.engine))
+    // SP-EXT: list every channel's presets, labelled. Scoping them away fixed the overwriting but made each channel
+    // look empty, which is indistinguishable from "the preset was not saved".
+    const mine = scopeOf(this.engine)
+    const users = loadUserPresets()
     if (users.length) {
       const uGroup = el('optgroup') as HTMLOptGroupElement
       uGroup.label = 'User'
       for (const p of users) {
         const o = el('option', undefined, p.name) as HTMLOptionElement
-        o.value = `user:${p.name}`
+        o.value = `user:${p.scope ?? 'default'}:${p.name}`
+
+        o.textContent = (p.scope ?? 'default') === mine ? p.name : `${p.name}  (${p.scope ?? 'default'})`
         uGroup.appendChild(o)
       }
       this.select.appendChild(uGroup)
@@ -666,7 +671,13 @@ export class PresetBrowser {
     const preset =
       kind === 'factory'
         ? FACTORY.find(p => p.name === name)
-        : loadUserPresets(scopeOf(this.engine)).find(p => p.name === name)
+        : (() => {
+            // value is user:<scope>:<name>; a preset saved by another channel can still be used here
+            const parts = value.split(':')
+            const scope = parts.length > 2 ? parts[1] : undefined
+            const nm = parts.length > 2 ? parts.slice(2).join(':') : name
+            return readAll().find((p) => p.name === nm && (scope == null || (p.scope ?? 'default') === scope))
+          })()
     if (preset) this.engine.loadPreset(preset)
   }
 }
