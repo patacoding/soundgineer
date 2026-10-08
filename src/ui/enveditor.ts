@@ -61,7 +61,9 @@ export class EnvDisplay {
     }
     if (!best) return
     this.drag = { field: best.field, kind: best.kind, grabX: px }
-    this.canvas.setPointerCapture(e.pointerId)
+    // capture keeps the drag alive outside the canvas; a synthetic or stale pointer id can throw, which must not
+    // abandon the drag we have already started
+    try { this.canvas.setPointerCapture(e.pointerId) } catch {}
     e.preventDefault()
   }
 
@@ -164,6 +166,7 @@ export class EnvDisplay {
       { field: 'decay', kind: 'curve', x: X(del + atk + hold + dec / 2), y: Y(sus + (1 - sus) * (1 - shape(0.5, -dc))) },
       { field: 'release', kind: 'curve', x: X(del + atk + hold + dec + susTime + rel / 2), y: Y(sus * (1 - shape(0.5, -rc))) },
     ]
+    ;(window as unknown as { __sgrEnvHandles?: unknown }).__sgrEnvHandles = this.handles.map((h) => ({ field: h.field, kind: h.kind, x: h.x, y: h.y }))   // SP-EXT: testability
     c.fillStyle = '#ff9a3c'
     for (const hd of this.handles) { c.beginPath(); c.arc(hd.x, hd.y, 3.5, 0, Math.PI * 2); c.fill() }
 
